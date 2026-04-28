@@ -1,0 +1,14 @@
+# Excel / 数据文件
+*.xlsx
+*.xls
+
+# 生成的输出
+*.xcstrings
+*.swift
+translation_cache.json
+
+# macOS
+.DS_Store
+
+# Claude Code
+.claude/
