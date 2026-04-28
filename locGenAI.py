@@ -140,8 +140,14 @@ for sheet_index, sheet_name in enumerate(xls.sheet_names, 1):
                 break
     lang_cols["zh-Hans"] = text_col
 
+    # 编码列 = key 列，没有则跳过此 Sheet
+    code_col = next((c for c in df.columns if "编码" in c), None)
+    if not code_col:
+        print(f"  ⚠️  无「编码」列，跳过此 Sheet")
+        continue
+
     if test_mode:
-        print(f"  🔍 列检测: page_col='{page_col}' | ui_col='{ui_col}' | text_col='{text_col}' | 语言列: {list(lang_cols.keys())}")
+        print(f"  🔍 列检测: page_col='{page_col}' | ui_col='{ui_col}' | text_col='{text_col}' | code_col='{code_col}' | 语言列: {list(lang_cols.keys())}")
 
     if not text_col:
         print("⚠️ 找不到中文列，跳过")
@@ -153,11 +159,8 @@ for sheet_index, sheet_name in enumerate(xls.sheet_names, 1):
     if ui_col:
         df[ui_col] = df[ui_col].ffill()
 
-    if "key" not in df.columns:
-        df["key"] = ""
-        key_from_excel = False
-    else:
-        key_from_excel = True
+    # 编码列即 key 列，不再新增
+    key_from_excel = pd.notna(df[code_col]).any() if code_col in df.columns else False
 
     sheet_rows = []
     total_rows = len(df)
@@ -182,16 +185,30 @@ for sheet_index, sheet_name in enumerate(xls.sheet_names, 1):
     for idx, row in rows_iter:
         row_number = idx + 1
 
-        # 跳过已有 key
-        key_val = row.get("key", "")
+        # 跳过已有 key（编码列有值）
+        key_val = row.get(code_col, "")
         has_existing_key = pd.notna(key_val) and str(key_val).strip() != ""
         if not test_mode and has_existing_key:
+            continue
+
+        # 跳过翻译不完整的行（任一语言列为空则整行跳过）
+        incomplete = False
+        for col in lang_cols.values():
+            val = row.get(col, "")
+            if not (pd.notna(val) and str(val).strip()):
+                incomplete = True
+                break
+        if incomplete:
+            if test_mode:
+                print(f"  ⏭️  行{row_number}: 翻译不完整，正式运行将跳过")
             continue
 
         row_texts = {}
         for loc, col in lang_cols.items():
             val = row.get(col, "")
-            row_texts[loc] = str(val) if (pd.notna(val) and str(val).strip()) else ""
+            text = str(val).strip() if pd.notna(val) else ""
+            if text:
+                row_texts[loc] = text
         text_zh_hans = row_texts.get("zh-Hans", "")
         page_name = row.get(page_col, "") if page_col else ""
         ui_name = row.get(ui_col, "") if ui_col else ""
@@ -219,7 +236,7 @@ for sheet_index, sheet_name in enumerate(xls.sheet_names, 1):
             print(f"  │   🌐 {lang_preview}")
             print(f"  └─ KEY: {key}")
         else:
-            df.at[idx, "key"] = key
+            df.at[idx, code_col] = key
             if pbar:
                 pbar.update(1)
             processed = processed + 1 if pbar else 0
@@ -241,21 +258,15 @@ for sheet_index, sheet_name in enumerate(xls.sheet_names, 1):
             print(f"     ui 唯一值:   {df[ui_col].dropna().nunique()}")
         continue
 
-    # ===== 写回 Excel =====
+    # ===== 写回 Excel（编码列） =====
     wb = load_workbook(excel_file)
     ws = wb[sheet_name]
     header_row = 2
 
-    if key_from_excel:
-        # key 列已存在于原 Excel，找到它的位置
-        key_col_idx = list(df.columns).index("key") + 1  # 0-indexed → 1-indexed
-    else:
-        # 新 key 列：DataFrame 最后列即 key，对应 Excel 第 len(df.columns) 列
-        key_col_idx = len(df.columns)
-        ws.cell(row=header_row, column=key_col_idx, value="key")
+    code_col_idx = list(df.columns).index(code_col) + 1  # 0-indexed → 1-indexed
 
-    for i, row in enumerate(df.itertuples(), start=3):
-        ws.cell(row=i, column=key_col_idx, value=row.key)
+    for i, (_, row_data) in enumerate(df.iterrows(), start=3):
+        ws.cell(row=i, column=code_col_idx, value=row_data[code_col])
 
     wb.save(excel_file)
 
